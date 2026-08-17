@@ -2,7 +2,7 @@ import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { build } from 'esbuild'
 import { chmod, copyFile, cp, readdir, rm, stat, symlink } from 'fs/promises'
-import { resolve } from 'path'
+import { delimiter, join, resolve } from 'path'
 import { preloadConfig, sidecarConfig } from './esbuild.config'
 
 const dist = resolve(__dirname, 'dist')
@@ -81,6 +81,28 @@ async function dropSourceMaps(directory = dist) {
   )
 }
 
+function onPath(command: string) {
+  return (process.env.PATH ?? '')
+    .split(delimiter)
+    .some((directory) => directory && existsSync(join(directory, command)))
+}
+
+/**
+ * `linuxdeploy` and its AppImage plugin shell out to tools the bundler does not
+ * ship, and report a missing one as an opaque `failed to run linuxdeploy` after
+ * the whole release build. Checking upfront turns that into an actionable error.
+ */
+function checkAppImageTools() {
+  const missing = ['file', 'patchelf', 'strip'].filter((tool) => !onPath(tool))
+  if (missing.length === 0) return
+  throw new Error(
+    `The AppImage bundler needs ${missing.join(', ')} on PATH. Install ` +
+      `${missing.join(' ')} (Debian/Ubuntu: \`apt install ${missing.join(' ')}\`, ` +
+      `Arch: \`pacman -S ${missing.join(' ')} binutils\`, Fedora: \`dnf install ` +
+      `${missing.join(' ')} binutils\`), or drop \`appimage\` from BUNDLE_TARGETS.`,
+  )
+}
+
 /**
  * Build the JavaScript half of the Tauri target: the sidecar hosting the
  * runtime and the renderer bridge the shell injects into every window.
@@ -110,8 +132,27 @@ async function main() {
     console.log('Staged the renderer and the Node runtime in dist/')
     const args = ['exec', 'tauri', 'build']
     // The bundle targets default to the ones declared in `tauri.conf.json`.
-    if (process.env.BUNDLE_TARGETS) args.push('--bundles', process.env.BUNDLE_TARGETS)
-    const result = spawnSync('pnpm', args, { stdio: 'inherit', cwd: __dirname })
+    const targets = process.env.BUNDLE_TARGETS
+    if (targets) args.push('--bundles', targets)
+    // Anything the caller passes after `--` reaches the bundler, e.g.
+    // `--verbose`; the separator itself must not, since `tauri build --` hands
+    // the rest to `cargo` instead.
+    args.push(...process.argv.slice(2).filter((arg) => arg !== '--'))
+    if (process.platform === 'linux' && (targets ?? 'appimage').includes('appimage')) {
+      checkAppImageTools()
+    }
+    const result = spawnSync('pnpm', args, {
+      stdio: 'inherit',
+      cwd: __dirname,
+      env: {
+        // `linuxdeploy` and `appimagetool` are AppImages themselves, so they
+        // mount over FUSE 2, which distributions no longer install by default;
+        // without it they die before printing why. Extracting them instead is
+        // what upstream recommends and costs a few seconds once.
+        APPIMAGE_EXTRACT_AND_RUN: '1',
+        ...process.env,
+      },
+    })
     if (result.status !== 0) process.exit(result.status ?? 1)
     return
   }

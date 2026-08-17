@@ -40,7 +40,15 @@ cargo build --manifest-path xmcl-tauri-app/src-tauri/Cargo.toml
 pnpm build:renderer
 pnpm --filter xmcl-tauri-app run bundle          # every target of tauri.conf.json
 BUNDLE_TARGETS=deb pnpm --filter xmcl-tauri-app run bundle
+pnpm --filter xmcl-tauri-app run bundle -- --verbose
 ```
+
+The AppImage target drives `linuxdeploy`, which shells out to `file`, `patchelf`
+and `strip`; `build.ts` checks for them before the release build because the
+bundler reports a missing one as an opaque `failed to run linuxdeploy` minutes
+later. `linuxdeploy` and `appimagetool` are AppImages themselves, so `build.ts`
+also exports `APPIMAGE_EXTRACT_AND_RUN=1` — without it they need FUSE 2, which
+current distributions no longer install, and they die with the same opaque error.
 
 The icons in `src-tauri/icons` are the square rendering of the Electron icon
 (`xmcl-electron-app/icons/light@Square150x150Logo.scale-400_theme-light.png`,
