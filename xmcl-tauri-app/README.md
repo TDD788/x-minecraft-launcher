@@ -42,6 +42,13 @@ pnpm --filter xmcl-tauri-app run bundle          # every target of tauri.conf.js
 BUNDLE_TARGETS=deb pnpm --filter xmcl-tauri-app run bundle
 ```
 
+The icons in `src-tauri/icons` are the square rendering of the Electron icon
+(`xmcl-electron-app/icons/light@Square150x150Logo.scale-400_theme-light.png`,
+whose 600x607 drop shadow makes it non-square), centred on a transparent canvas.
+The AppImage bundler aborts with `couldn't find a square icon to use as AppImage
+icon` if it is given only the non-square source, so keep them square when the
+artwork changes. Windows and macOS keep using the Electron `.ico`/`.icns`.
+
 The bundle packs the renderer, the sidecar, the preloads, the workers, the
 native modules, the agent documents and a Node runtime, so the target machine
 needs no Node installed. The staged runtime is the one running the build, so
