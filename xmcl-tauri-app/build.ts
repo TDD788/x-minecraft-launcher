@@ -94,21 +94,31 @@ function onPath(command: string) {
  */
 function checkAppImageTools() {
   // `file`, `patchelf` and `strip` are used by linuxdeploy itself, `pkg-config`
-  // and `find` by its GTK plugin.
-  const missing = ['file', 'patchelf', 'strip', 'find'].filter((tool) => !onPath(tool))
-  if (!onPath('pkg-config') && !onPath('pkgconf')) missing.push('pkg-config')
+  // and `find` by its GTK plugin. The alternatives are the packages shipping
+  // each tool, since none of them are named after it everywhere.
+  const tools = {
+    file: { debian: 'file', arch: 'file', fedora: 'file' },
+    patchelf: { debian: 'patchelf', arch: 'patchelf', fedora: 'patchelf' },
+    strip: { debian: 'binutils', arch: 'binutils', fedora: 'binutils' },
+    find: { debian: 'findutils', arch: 'findutils', fedora: 'findutils' },
+    'pkg-config': { debian: 'pkg-config', arch: 'pkgconf', fedora: 'pkgconf' },
+  }
+  const missing = Object.keys(tools).filter(
+    (tool) => !onPath(tool) && !(tool === 'pkg-config' && onPath('pkgconf')),
+  ) as (keyof typeof tools)[]
   if (missing.length === 0) return
+  const packages = (distribution: 'debian' | 'arch' | 'fedora') =>
+    [...new Set(missing.map((tool) => tools[tool][distribution]))].join(' ')
   throw new Error(
-    `The AppImage bundler needs ${missing.join(', ')} on PATH. Install ` +
-      `${missing.join(' ')} (Debian/Ubuntu: \`apt install ${missing.join(' ')}\`, ` +
-      `Arch: \`pacman -S ${missing.join(' ')} binutils findutils\`, Fedora: ` +
-      `\`dnf install ${missing.join(' ')} binutils findutils\`), or drop ` +
-      '`appimage` from BUNDLE_TARGETS.',
+    `The AppImage bundler needs ${missing.join(', ')} on PATH. Install them ` +
+      `(Debian/Ubuntu: \`apt install ${packages('debian')}\`, Arch: \`pacman -S ` +
+      `${packages('arch')}\`, Fedora: \`dnf install ${packages('fedora')}\`), or ` +
+      'drop `appimage` from BUNDLE_TARGETS.',
   )
 }
 
 function bundle(args: string[]) {
-  return spawnSync('pnpm', args, { stdio: 'inherit', cwd: __dirname }).status ?? 1
+  return spawnSync('pnpm', args, { stdio: 'inherit', cwd: __dirname })
 }
 
 /**
@@ -149,17 +159,21 @@ async function main() {
     if (process.platform === 'linux' && (targets ?? 'appimage').includes('appimage')) {
       checkAppImageTools()
     }
-    const status = bundle(args)
-    if (status === 0) return
+    const result = bundle(args)
+    if (result.status === 0) return
     // The bundler pipes linuxdeploy's output into its debug log and reports the
     // failure as a bare `failed to run linuxdeploy`, so the reason is only
     // printed with `--verbose`. Retrying costs seconds — the compilation is
     // already cached — and saves the user a second full build to learn why.
-    if (!args.some((arg) => arg === '--verbose' || /^-v+$/.test(arg))) {
+    // Only an actual non-zero exit qualifies: Ctrl-C reaches the bundler as a
+    // signal, and retrying it would start the build the user just aborted.
+    const retriable = typeof result.status === 'number' && !result.error
+    if (retriable && !args.some((arg) => arg === '--verbose' || /^-v+$/.test(arg))) {
       console.error('\nThe bundler failed. Retrying with --verbose to show why.\n')
       bundle([...args, '--verbose'])
     }
-    process.exit(status)
+    if (result.error) throw result.error
+    process.exit(result.status ?? 1)
   }
 
   if (target === 'shell') {
