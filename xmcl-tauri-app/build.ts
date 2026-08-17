@@ -1,6 +1,7 @@
 import { spawnSync } from 'child_process'
+import { existsSync } from 'fs'
 import { build } from 'esbuild'
-import { chmod, copyFile, cp, readdir, rm, stat } from 'fs/promises'
+import { chmod, copyFile, cp, readdir, rm, stat, symlink } from 'fs/promises'
 import { resolve } from 'path'
 import { preloadConfig, sidecarConfig } from './esbuild.config'
 
@@ -21,6 +22,21 @@ async function stageRenderer() {
     )
   }
   await cp(source, resolve(dist, 'renderer'), { recursive: true })
+}
+
+/**
+ * Development counterpart of `stageRenderer`.
+ *
+ * `dist/renderer` is a declared bundle resource, so `cargo build` and
+ * `cargo run` refuse to start without it, and `dist/` is wiped on every build.
+ * A link keeps the compile step cheap and picks up renderer rebuilds; it is
+ * skipped silently when the renderer has never been built, since the shell then
+ * runs against the `dev:renderer` server instead.
+ */
+async function linkRenderer() {
+  const source = resolve(__dirname, '../xmcl-keystone-ui/dist')
+  if (!existsSync(source)) return
+  await symlink(source, resolve(dist, 'renderer'), 'dir').catch(() => undefined)
 }
 
 /**
@@ -81,12 +97,17 @@ async function main() {
   await Promise.all([build(sidecarConfig), build(preloadConfig)])
   console.log(`Built sidecar and renderer bridge in ${((Date.now() - started) / 1000).toFixed(2)}s`)
 
+  // Both are declared bundle resources, so `cargo build`/`cargo run` fail
+  // without them, and `dist/` is wiped above. The sidecar also reads the agent
+  // documents from this directory in development.
+  await stageAgentDocuments()
+  if (target !== 'bundle') await linkRenderer()
+
   if (target === 'bundle') {
     await stageRenderer()
     await stageNode()
-    await stageAgentDocuments()
     await dropSourceMaps()
-    console.log('Staged the renderer, the agent documents and the Node runtime in dist/')
+    console.log('Staged the renderer and the Node runtime in dist/')
     const args = ['exec', 'tauri', 'build']
     // The bundle targets default to the ones declared in `tauri.conf.json`.
     if (process.env.BUNDLE_TARGETS) args.push('--bundles', process.env.BUNDLE_TARGETS)

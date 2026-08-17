@@ -1,10 +1,12 @@
 import { createReadStream, existsSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { createServer, Server } from 'http'
 import { AddressInfo } from 'net'
 import { extname, join, normalize, resolve, sep } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { LauncherProtocolHandler } from '@xmcl/runtime/app'
+import { LAUNCHER_ORIGIN, resolveProxyUrl } from '../../bridge/network'
 
 const MIME: Record<string, string> = {
   '.js': 'text/javascript',
@@ -46,7 +48,14 @@ export class RendererServer {
     })
   })
 
-  constructor(private readonly dist: string) {}
+  /**
+   * @param dist Directory holding the built renderer.
+   * @param endpoint Base of the sidecar's network route, used to rewrite the
+   * `http://launcher` URLs baked into the HTML. The renderer bridge rewrites the
+   * ones created at runtime, but a `<script src>` in the document is fetched by
+   * the HTML parser before any script can patch it.
+   */
+  constructor(private readonly dist: string, private readonly endpoint = '') {}
 
   /** Route non-asset requests once the runtime is constructed. */
   setProtocol(protocol: LauncherProtocolHandler) {
@@ -73,6 +82,10 @@ export class RendererServer {
     const file = this.resolveAsset(url.pathname)
     if (file) {
       res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream')
+      if (extname(file) === '.html' && this.endpoint) {
+        res.end(this.rewriteLauncherUrls(await readFile(file, 'utf-8')))
+        return
+      }
       await pipeline(createReadStream(file), res).catch(() => {
         if (!res.headersSent) res.writeHead(404)
         res.end()
@@ -100,6 +113,16 @@ export class RendererServer {
     } else {
       res.end(response.body)
     }
+  }
+
+  /**
+   * Point the document's `http://launcher` URLs at the network route, which is
+   * where the runtime protocol handlers answer them.
+   */
+  private rewriteLauncherUrls(html: string) {
+    return html.replace(new RegExp(`${LAUNCHER_ORIGIN}/[^"'\\s>]*`, 'g'), (raw) =>
+      resolveProxyUrl(raw, { origin: LAUNCHER_ORIGIN, endpoint: this.endpoint }) ?? raw,
+    )
   }
 
   /**

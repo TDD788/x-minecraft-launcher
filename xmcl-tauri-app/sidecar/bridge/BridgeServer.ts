@@ -1,9 +1,10 @@
 import { timingSafeEqual } from 'crypto'
 import { EventEmitter } from 'events'
-import { createServer, IncomingMessage, Server } from 'http'
+import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
 import { AddressInfo } from 'net'
 import { Duplex } from 'stream'
 import { WebSocket, WebSocketServer } from 'ws'
+import { TOKEN_HEADER, TOKEN_PARAM } from '../../bridge/network'
 import {
   BRIDGE_PATH,
   ClientMessage,
@@ -48,6 +49,16 @@ export interface BridgeEvent {
 export type BridgeHandler = (event: BridgeEvent, ...args: any[]) => unknown
 
 /**
+ * A plain HTTP route served next to the WebSocket. Used by the network proxy,
+ * which needs streams and status codes the RPC protocol cannot carry.
+ */
+export type RouteHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+) => void | Promise<void>
+
+/**
  * Local RPC endpoint replacing Electron's intra-process IPC.
  *
  * Security notes, because moving IPC to a socket is a real regression surface:
@@ -60,10 +71,9 @@ export class BridgeServer {
   private readonly handlers = new Map<string, { handler: BridgeHandler; once: boolean }>()
   private readonly clients = new Map<WebSocket, BridgeClient>()
   private readonly localListeners = new Map<string, Set<(...args: any[]) => void>>()
+  private readonly routes = new Map<string, RouteHandler>()
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024 * 1024 })
-  private readonly http: Server = createServer((_, res) => {
-    res.writeHead(404).end()
-  })
+  private readonly http: Server = createServer((req, res) => this.onRequest(req, res))
 
   constructor(private readonly token: string, private readonly logger: Pick<Console, 'log' | 'warn' | 'error'> = console) {
     this.http.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head))
@@ -79,6 +89,15 @@ export class BridgeServer {
   /** Register a channel consumed by the first call, like `ipcMain.handleOnce`. */
   handleOnce(channel: string, handler: BridgeHandler) {
     this.handlers.set(channel, { handler, once: true })
+    return this
+  }
+
+  /**
+   * Serve a plain HTTP path from the bridge server. Authenticated with the same
+   * per-launch token as the socket, because these routes reach the runtime.
+   */
+  route(path: string, handler: RouteHandler) {
+    this.routes.set(path, handler)
     return this
   }
 
@@ -169,14 +188,43 @@ export class BridgeServer {
     client.send(payload)
   }
 
+  private onRequest(req: IncomingMessage, res: ServerResponse) {
+    if (!this.isLoopback(req)) {
+      res.writeHead(403).end()
+      return
+    }
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const handler = this.routes.get(url.pathname)
+    if (!handler) {
+      res.writeHead(404).end()
+      return
+    }
+    const header = req.headers[TOKEN_HEADER]
+    const token = url.searchParams.get(TOKEN_PARAM) ?? (Array.isArray(header) ? header[0] : header) ?? null
+    if (!this.isAuthorized(token)) {
+      this.logger.warn(`[bridge] rejected ${url.pathname}: invalid token`)
+      res.writeHead(401).end()
+      return
+    }
+    void Promise.resolve(handler(req, res, url)).catch((e) => {
+      this.logger.error(`[bridge] route '${url.pathname}' failed`, e)
+      if (!res.headersSent) res.writeHead(500)
+      res.end()
+    })
+  }
+
+  private isLoopback(req: IncomingMessage) {
+    const remote = req.socket.remoteAddress ?? ''
+    return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  }
+
   private onUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
     const reject = (reason: string) => {
       this.logger.warn(`[bridge] rejected upgrade: ${reason}`)
       socket.destroy()
     }
-    const remote = req.socket.remoteAddress ?? ''
-    if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') {
-      return reject(`non-loopback peer ${remote}`)
+    if (!this.isLoopback(req)) {
+      return reject(`non-loopback peer ${req.socket.remoteAddress ?? ''}`)
     }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     if (url.pathname !== BRIDGE_PATH) {

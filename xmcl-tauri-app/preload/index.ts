@@ -8,6 +8,7 @@
  */
 
 import './shim/webkit'
+import './shim/network'
 import '../../xmcl-electron-app/preload/controller'
 import '../../xmcl-electron-app/preload/service'
 import '../../xmcl-electron-app/preload/task'

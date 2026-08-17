@@ -1,2 +1,4 @@
 src-tauri/target/
 src-tauri/gen/
+# Build-time secrets, like the Electron target's own .env (see buildEnv.ts)
+.env

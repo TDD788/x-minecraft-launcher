@@ -98,9 +98,19 @@ export class TauriUpdater implements LauncherAppUpdater {
   async checkUpdateTask(): Promise<ReleaseInfo> {
     const { allowPrerelease, locale } = await this.app.registry.get(kSettings)
     const query = `version=v${this.app.version}&prerelease=${allowPrerelease || false}`
-    const response = await this.app.fetch(`https://api.xmcl.app/latest?${query}`, {
-      headers: { 'Accept-Language': locale },
-    })
+    const headers = { 'Accept-Language': locale }
+    const primary = await this.app
+      .fetch(`https://api.xmcl.app/latest?${query}`, { headers })
+      .catch(() => undefined)
+    // Same two endpoints as the Electron updater: the Deno edge answers a
+    // regional 404 (and, as seen in the wild, a 500), so any non-success
+    // response falls back instead of failing the check.
+    const response = primary?.ok
+      ? primary
+      : await this.app.fetch(
+        `https://xmcl-core-api.azurewebsites.net/api/latest?${query}`,
+        { headers },
+      )
     if (!response.ok) {
       throw new AnyError('UpdateError', `Fail to get the latest release: ${response.status}`)
     }
