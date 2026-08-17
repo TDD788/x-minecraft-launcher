@@ -43,13 +43,19 @@ BUNDLE_TARGETS=deb pnpm --filter xmcl-tauri-app run bundle
 pnpm --filter xmcl-tauri-app run bundle -- --verbose
 ```
 
-The AppImage target drives `linuxdeploy`, which shells out to `file`, `patchelf`
-and `strip`, and its GTK plugin to `pkg-config` and `find`; `build.ts` checks for
-them before the release build, because `tauri-bundler` pipes linuxdeploy's output
-into its debug log and reports any failure as a bare `failed to run linuxdeploy`.
-For the same reason `build.ts` retries a failed bundle once with `--verbose`,
-which is the only way to see what linuxdeploy actually complained about; the
-compilation is cached, so the retry costs seconds.
+The AppImage target drives `linuxdeploy`, which needs `file` for appimagetool
+and `pkg-config` plus `find` for its GTK plugin; `build.ts` checks for them
+before the release build, because `tauri-bundler` pipes linuxdeploy's output into
+its debug log and reports any failure as a bare `failed to run linuxdeploy`.
+`build.ts` also exports `NO_STRIP=1`: linuxdeploy strips every library it
+deploys with the binutils 2.35 it bundles, which does not understand the
+`.relr.dyn` section current toolchains emit, so on an up-to-date distribution
+(Arch, Fedora 40+) every `strip` call fails and it aborts. Nothing is lost —
+distribution libraries are already stripped and `[profile.release]` strips ours.
+Because that opaque error hides every other cause too, `build.ts` retries a
+failed bundle once with `--verbose`, which is the only way to see what
+linuxdeploy actually complained about; the compilation is cached, so the retry
+costs seconds.
 
 The icons in `src-tauri/icons` are the square rendering of the Electron icon
 (`xmcl-electron-app/icons/light@Square150x150Logo.scale-400_theme-light.png`,

@@ -93,13 +93,13 @@ function onPath(command: string) {
  * the whole release build. Checking upfront turns that into an actionable error.
  */
 function checkAppImageTools() {
-  // `file`, `patchelf` and `strip` are used by linuxdeploy itself, `pkg-config`
-  // and `find` by its GTK plugin. The alternatives are the packages shipping
-  // each tool, since none of them are named after it everywhere.
+  // `file` is used by appimagetool, `pkg-config` and `find` by linuxdeploy's GTK
+  // plugin, which aborts without them. linuxdeploy bundles its own `patchelf`
+  // and `strip` and prefers them over the ones on PATH, so those are not
+  // requirements. The alternatives are the packages shipping each tool, since
+  // none of them are named after it everywhere.
   const tools = {
     file: { debian: 'file', arch: 'file', fedora: 'file' },
-    patchelf: { debian: 'patchelf', arch: 'patchelf', fedora: 'patchelf' },
-    strip: { debian: 'binutils', arch: 'binutils', fedora: 'binutils' },
     find: { debian: 'findutils', arch: 'findutils', fedora: 'findutils' },
     'pkg-config': { debian: 'pkg-config', arch: 'pkgconf', fedora: 'pkgconf' },
   }
@@ -118,7 +118,20 @@ function checkAppImageTools() {
 }
 
 function bundle(args: string[]) {
-  return spawnSync('pnpm', args, { stdio: 'inherit', cwd: __dirname })
+  return spawnSync('pnpm', args, {
+    stdio: 'inherit',
+    cwd: __dirname,
+    env: {
+      // linuxdeploy strips every deployed library with the binutils 2.35 it
+      // bundles, which does not know the `.relr.dyn` section that binutils 2.38
+      // and glibc 2.36 emit, so on a current distribution every `strip` call
+      // fails and it aborts. The libraries come stripped from the distribution
+      // and `[profile.release]` already strips ours, so skipping it costs
+      // nothing. Overridable, since the variable is only read when set.
+      NO_STRIP: '1',
+      ...process.env,
+    },
+  })
 }
 
 /**
