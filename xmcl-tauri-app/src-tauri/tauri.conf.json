@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "X Minecraft Launcher",
+  "version": "0.66.2",
+  "identifier": "app.xmcl.launcher",
+  "build": {
+    "frontendDist": "../dist/renderer",
+    "devUrl": "http://localhost:3000"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["xmcl"]
+      }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/Voxelum/x-minecraft-launcher/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb", "nsis", "dmg"],
+    "icon": [
+      "../../xmcl-electron-app/icons/light@256x256.png",
+      "../../xmcl-electron-app/icons/light.ico",
+      "../../xmcl-electron-app/icons/light.icns"
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    },
+    "resources": {
+      "../dist/*": "dist/",
+      "../dist/renderer/": "dist/renderer/",
+      "../dist/agent-documents/": "dist/agent-documents/"
+    }
+  }
+}
