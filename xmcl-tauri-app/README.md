@@ -44,11 +44,12 @@ pnpm --filter xmcl-tauri-app run bundle -- --verbose
 ```
 
 The AppImage target drives `linuxdeploy`, which shells out to `file`, `patchelf`
-and `strip`; `build.ts` checks for them before the release build because the
-bundler reports a missing one as an opaque `failed to run linuxdeploy` minutes
-later. `linuxdeploy` and `appimagetool` are AppImages themselves, so `build.ts`
-also exports `APPIMAGE_EXTRACT_AND_RUN=1` — without it they need FUSE 2, which
-current distributions no longer install, and they die with the same opaque error.
+and `strip`, and its GTK plugin to `pkg-config` and `find`; `build.ts` checks for
+them before the release build, because `tauri-bundler` pipes linuxdeploy's output
+into its debug log and reports any failure as a bare `failed to run linuxdeploy`.
+For the same reason `build.ts` retries a failed bundle once with `--verbose`,
+which is the only way to see what linuxdeploy actually complained about; the
+compilation is cached, so the retry costs seconds.
 
 The icons in `src-tauri/icons` are the square rendering of the Electron icon
 (`xmcl-electron-app/icons/light@Square150x150Logo.scale-400_theme-light.png`,
