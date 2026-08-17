@@ -53,6 +53,22 @@ async function stageNode() {
   const target = resolve(dist, process.platform === 'win32' ? 'node.exe' : 'node')
   await copyFile(source, target)
   if (process.platform !== 'win32') await chmod(target, 0o755)
+  stripNode(target)
+}
+
+/**
+ * The Node builds published by nodejs.org keep their symbol table, which is 17
+ * MB of an installer that ships nothing to read it with. The bundlers do not
+ * strip resources — and on Linux the AppImage bundler is told not to strip at
+ * all, since the `strip` linuxdeploy carries is too old for the sections a
+ * current toolchain emits.
+ *
+ * Skipped on macOS, where stripping a signed binary invalidates its signature.
+ */
+function stripNode(target: string) {
+  if (process.platform !== 'linux' || !onPath('strip')) return
+  const result = spawnSync('strip', [target], { stdio: 'inherit' })
+  if (result.status !== 0) console.warn(`Could not strip ${target}; shipping it as is.`)
 }
 
 /**
@@ -171,6 +187,13 @@ async function main() {
     args.push(...process.argv.slice(2).filter((arg) => arg !== '--'))
     if (process.platform === 'linux' && (targets ?? 'appimage').includes('appimage')) {
       checkAppImageTools()
+      // The AppImage carries GStreamer so WebKit can play media on a host that
+      // does not ship the plugins, which costs around 70 MB. Building without
+      // them is a supported trade-off for a distribution-specific package.
+      if (process.env.BUNDLE_MEDIA_FRAMEWORK === '0') {
+        const override = { bundle: { linux: { appimage: { bundleMediaFramework: false } } } }
+        args.push('--config', JSON.stringify(override))
+      }
     }
     const result = bundle(args)
     if (result.status === 0) return
