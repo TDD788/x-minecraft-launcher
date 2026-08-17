@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, TrayIconId};
 use tauri::window::{ProgressBarState, ProgressBarStatus};
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -325,6 +325,37 @@ fn parse_color(value: &str) -> Option<tauri::window::Color> {
   ))
 }
 
+fn tray_icon(path: Option<String>) -> Option<tauri::image::Image<'static>> {
+  let path = path?;
+  match tauri::image::Image::from_path(&path) {
+    Ok(image) => Some(image),
+    Err(e) => {
+      eprintln!("[shell] cannot read the tray icon {path}: {e}");
+      None
+    }
+  }
+}
+
+fn tray_menu<R: Runtime>(app: &AppHandle<R>, items: Vec<TrayMenuItem>) -> Option<Menu<R>> {
+  let mut menu = MenuBuilder::new(app);
+  for item in items {
+    match MenuItemBuilder::with_id(item.id, item.label)
+      .enabled(item.enabled.unwrap_or(true))
+      .build(app)
+    {
+      Ok(entry) => menu = menu.item(&entry),
+      Err(e) => eprintln!("[shell] cannot build a tray entry: {e}"),
+    }
+  }
+  match menu.build() {
+    Ok(menu) => Some(menu),
+    Err(e) => {
+      eprintln!("[shell] cannot build the tray menu: {e}");
+      None
+    }
+  }
+}
+
 fn set_tray<R: Runtime>(
   app: &AppHandle<R>,
   tooltip: Option<String>,
@@ -332,32 +363,37 @@ fn set_tray<R: Runtime>(
   items: Option<Vec<TrayMenuItem>>,
 ) {
   let id = TrayIconId::new(TRAY_ID);
-  let existing = app.tray_by_id(&id);
-  let mut builder = TrayIconBuilder::with_id(id.clone());
-  if let Some(tooltip) = tooltip.clone() {
+  let image = tray_icon(icon);
+  let menu = items.and_then(|items| tray_menu(app, items));
+
+  // The runtime updates the tooltip and the menu as the launcher state changes.
+  // Update the icon in place instead of rebuilding it: on Linux each tray icon
+  // exports a StatusNotifierItem on the session bus under a path derived from
+  // its id, and the replacement claims that path before the removed one has
+  // released it, so a rebuild logs `An object is already exported for the
+  // interface org.kde.StatusNotifierItem` and can leave the menu unresponsive.
+  if let Some(tray) = app.tray_by_id(&id) {
+    if let Some(tooltip) = &tooltip {
+      let _ = tray.set_tooltip(Some(tooltip));
+    }
+    if image.is_some() {
+      let _ = tray.set_icon(image);
+    }
+    if menu.is_some() {
+      let _ = tray.set_menu(menu);
+    }
+    return;
+  }
+
+  let mut builder = TrayIconBuilder::with_id(id);
+  if let Some(tooltip) = tooltip {
     builder = builder.tooltip(tooltip);
   }
-  if let Some(path) = icon.clone() {
-    match tauri::image::Image::from_path(&path) {
-      Ok(image) => builder = builder.icon(image),
-      Err(e) => eprintln!("[shell] cannot read the tray icon {path}: {e}"),
-    }
+  if let Some(image) = image {
+    builder = builder.icon(image);
   }
-  if let Some(items) = items {
-    let mut menu = MenuBuilder::new(app);
-    for item in items {
-      match MenuItemBuilder::with_id(item.id, item.label)
-        .enabled(item.enabled.unwrap_or(true))
-        .build(app)
-      {
-        Ok(entry) => menu = menu.item(&entry),
-        Err(e) => eprintln!("[shell] cannot build a tray entry: {e}"),
-      }
-    }
-    match menu.build() {
-      Ok(menu) => builder = builder.menu(&menu),
-      Err(e) => eprintln!("[shell] cannot build the tray menu: {e}"),
-    }
+  if let Some(menu) = menu {
+    builder = builder.menu(&menu);
   }
 
   let handle = app.clone();
@@ -371,11 +407,6 @@ fn set_tray<R: Runtime>(
       }
     });
 
-  // Tauri keeps one tray per id; rebuilding it is how the runtime updates the
-  // icon or the menu.
-  if existing.is_some() {
-    app.remove_tray_by_id(&TrayIconId::new(TRAY_ID));
-  }
   if let Err(e) = builder.build(app) {
     eprintln!("[shell] cannot create the tray icon: {e}");
   }

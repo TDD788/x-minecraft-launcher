@@ -39,8 +39,11 @@
       "../../xmcl-electron-app/icons/light.icns"
     ],
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"]
       }
     },
     "resources": {

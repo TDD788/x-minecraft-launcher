@@ -57,6 +57,14 @@ failed bundle once with `--verbose`, which is the only way to see what
 linuxdeploy actually complained about; the compilation is cached, so the retry
 costs seconds.
 
+The AppImage carries GStreamer (`bundleMediaFramework`), because linuxdeploy
+deploys WebKit's `libgstreamer` but not the plugins, and WebKit then fails at
+startup with `GStreamer element appsink not found` and a NULL-instance
+`GLib-GObject-CRITICAL` — audio and video are dead in the webview even on a host
+that has the plugins installed. It costs about 70 MB; a package built for a
+single distribution can drop them with `BUNDLE_MEDIA_FRAMEWORK=0` and rely on
+the host's `gstreamer1.0-plugins-base`/`-good`, which the `.deb` depends on.
+
 The icons in `src-tauri/icons` are the square rendering of the Electron icon
 (`xmcl-electron-app/icons/light@Square150x150Logo.scale-400_theme-light.png`,
 whose 600x607 drop shadow makes it non-square), centred on a transparent canvas.
@@ -68,7 +76,9 @@ The bundle packs the renderer, the sidecar, the preloads, the workers, the
 native modules, the agent documents and a Node runtime, so the target machine
 needs no Node installed. The staged runtime is the one running the build, so
 installers are produced per platform (as `electron-builder` does today);
-`XMCL_NODE_BINARY` overrides it for cross-building.
+`XMCL_NODE_BINARY` overrides it for cross-building. It is stripped when staged
+(17 MB of symbols nothing in the installer can read), which the bundlers do not
+do for resources and, on Linux, `NO_STRIP=1` prevents outright.
 
 ## Provider APIs and the network route
 
