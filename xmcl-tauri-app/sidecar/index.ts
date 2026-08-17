@@ -10,7 +10,9 @@
 
 import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { NETWORK_PATH, networkEndpoint } from '../bridge/network'
 import { READY_MARKER } from '../bridge/protocol'
+import { createNetworkProxy } from './app/NetworkProxy'
 import { TauriLauncherApp } from './app/TauriLauncherApp'
 import { createDefaultApp } from './app/defaultApp'
 import { RendererServer } from './app/RendererServer'
@@ -51,16 +53,33 @@ async function main() {
     uptime: process.uptime(),
   }))
 
+  // The webview's replacement for `ElectronSession`'s request interception: the
+  // launcher's virtual `http://launcher` host and the API calls that need the
+  // runtime to inject provider credentials come back through this route. It is
+  // registered before `listen` and reads the protocol handler lazily, since the
+  // runtime is constructed below.
+  let launcher: TauriLauncherApp | undefined
+  bridge.route(
+    NETWORK_PATH,
+    createNetworkProxy({
+      protocol: () => launcher?.protocol,
+      userAgent: () => launcher?.userAgent ?? '',
+    }),
+  )
+
   const listening = await bridge.listen(port)
 
   // The renderer origin has to exist before the manifest is built, because the
   // manifest URL is what the shell loads and what the runtime keys app data on.
-  const renderer = new RendererServer(process.env.XMCL_RENDERER_DIST ?? join(__dirname, 'renderer'))
+  const renderer = new RendererServer(
+    process.env.XMCL_RENDERER_DIST ?? join(__dirname, 'renderer'),
+    networkEndpoint(listening, token!),
+  )
   const url = devServer
     ? `${devServer}/index.html`
     : `http://127.0.0.1:${await renderer.listen()}/index.html`
 
-  const app = new TauriLauncherApp({
+  const app: TauriLauncherApp = new TauriLauncherApp({
     bridge,
     shell,
     builtinAppManifest: createDefaultApp(url),
@@ -68,12 +87,19 @@ async function main() {
     env: process.env.APPIMAGE ? 'appimage' : 'raw',
     isDev: process.env.NODE_ENV === 'development',
   })
+  launcher = app
   renderer.setProtocol(app.protocol)
 
   // Ready before `start()`: the shell keeps the splash up until it sees this,
   // and the runtime's own boot can take seconds on a cold profile.
   console.log(`${READY_MARKER}${JSON.stringify({ port: listening, url })}`)
   console.log(`[sidecar] node ${process.versions.node} pid ${process.pid}`)
+  if (!process.env.CURSEFORGE_API_KEY) {
+    // Only whether it is set — never the value. Without it the runtime sends an
+    // empty `x-api-key` and every CurseForge call answers 403, which looks like
+    // a network failure in the UI.
+    console.warn('[sidecar] CURSEFORGE_API_KEY is not set; CurseForge requests will be rejected')
+  }
 
   const stop = async () => {
     await bridge.close().catch(() => undefined)

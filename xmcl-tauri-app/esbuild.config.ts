@@ -1,6 +1,7 @@
 import { BuildOptions, Plugin } from 'esbuild'
 import { yamlPlugin } from 'esbuild-plugin-yaml'
 import { resolve } from 'path'
+import { buildEnvDefine } from './buildEnv'
 import plugin7Zip from '../xmcl-electron-app/plugins/esbuild.native.plugin'
 import pluginElevate from '../xmcl-electron-app/plugins/esbuild.elevate.plugin'
 import pluginNode from '../xmcl-electron-app/plugins/esbuild.node.plugin'
@@ -29,6 +30,10 @@ const shared = {
  */
 export const sidecarConfig = {
   ...shared,
+  // The runtime reads the provider secrets off `process.env`, and a packaged
+  // sidecar has no `.env` next to it, so they are baked in the way the Electron
+  // main bundle does. See `buildEnv.ts` for where the values come from.
+  define: { ...shared.define, ...buildEnvDefine() },
   platform: 'node',
   target: 'node22',
   format: 'cjs',

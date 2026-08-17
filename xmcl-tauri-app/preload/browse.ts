@@ -7,4 +7,5 @@
  */
 
 import './shim/webkit'
+import './shim/network'
 import '../../xmcl-electron-app/preload/browse'

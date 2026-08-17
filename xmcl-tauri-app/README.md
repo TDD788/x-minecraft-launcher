@@ -48,6 +48,40 @@ needs no Node installed. The staged runtime is the one running the build, so
 installers are produced per platform (as `electron-builder` does today);
 `XMCL_NODE_BINARY` overrides it for cross-building.
 
+## Provider APIs and the network route
+
+Electron injected the provider credentials by intercepting the webview's traffic
+in `ElectronSession`: every `http`/`https` request went through
+`app.protocol.handle`, where `pluginApiFallback` adds the CurseForge `x-api-key`,
+the Modrinth token and the XMCL DPoP proof. WebKitGTK exposes no such hook to
+Node, so the same pipeline is reached over the bridge instead:
+
+```
+fetch/XHR in the webview
+  → preload/shim/network.ts rewrites the URL to  http://127.0.0.1:<bridge>/net?token=…&url=<original>
+  → sidecar/app/NetworkProxy.ts (token-checked, loopback-only)
+  → LauncherProtocolHandler with the original absolute URL
+  → pluginApiFallback adds the credentials → pluginCommonProtocol fetches upstream
+```
+
+Consequences worth knowing:
+
+- The API keys never leave the sidecar. The renderer keeps building its clients
+  with an empty key (`clientCurseforgeV1`), exactly as under Electron.
+- The proxy answers the CORS preflight itself. CurseForge answers `OPTIONS` with
+  404, and Electron never saw a preflight because it intercepted below CORS.
+- The bridge token authenticates the hop but is stripped (with `host`, `origin`
+  and `referer`) before the upstream request, so it cannot leak to a provider.
+- `http://launcher/...` (media, icons, block textures) goes through the same
+  route; the HTML the sidecar serves is rewritten because the parser fetches
+  `<script src="http://launcher/flights">` before any script can patch it.
+
+`CURSEFORGE_API_KEY` is baked into the sidecar bundle at build time by
+`buildEnv.ts`, from `xmcl-tauri-app/.env`, `xmcl-electron-app/.env` or the build
+environment — the same value the Electron main bundle uses. Without it the
+runtime sends an empty key, CurseForge answers 403 and the marketplace shows no
+results; the sidecar logs a warning at startup in that case.
+
 ## Updater
 
 `TauriUpdater` keeps the release check against `https://api.xmcl.app/latest`,

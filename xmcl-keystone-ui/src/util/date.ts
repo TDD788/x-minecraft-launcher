@@ -4,10 +4,11 @@ export interface TimeFormatOptions {
   timeStyle?: TimeStyle
 }
 export function getLocalDateString(s: string | number, options?: TimeFormatOptions) {
-  const format = Intl.DateTimeFormat(navigator.language, { dateStyle: options?.dateStyle, timeStyle: options?.timeStyle })
   const d = new Date(s)
   try {
-    return format.format(d)
+    // WebKit throws here when the system locale is not a valid BCP 47 tag,
+    // like the `C` locale, which `navigator.language` reports verbatim.
+    return Intl.DateTimeFormat(navigator.language, { dateStyle: options?.dateStyle, timeStyle: options?.timeStyle }).format(d)
   } catch (e) {
     return d.toLocaleString()
   }
