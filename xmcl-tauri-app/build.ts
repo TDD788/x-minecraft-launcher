@@ -93,14 +93,22 @@ function onPath(command: string) {
  * the whole release build. Checking upfront turns that into an actionable error.
  */
 function checkAppImageTools() {
-  const missing = ['file', 'patchelf', 'strip'].filter((tool) => !onPath(tool))
+  // `file`, `patchelf` and `strip` are used by linuxdeploy itself, `pkg-config`
+  // and `find` by its GTK plugin.
+  const missing = ['file', 'patchelf', 'strip', 'find'].filter((tool) => !onPath(tool))
+  if (!onPath('pkg-config') && !onPath('pkgconf')) missing.push('pkg-config')
   if (missing.length === 0) return
   throw new Error(
     `The AppImage bundler needs ${missing.join(', ')} on PATH. Install ` +
       `${missing.join(' ')} (Debian/Ubuntu: \`apt install ${missing.join(' ')}\`, ` +
-      `Arch: \`pacman -S ${missing.join(' ')} binutils\`, Fedora: \`dnf install ` +
-      `${missing.join(' ')} binutils\`), or drop \`appimage\` from BUNDLE_TARGETS.`,
+      `Arch: \`pacman -S ${missing.join(' ')} binutils findutils\`, Fedora: ` +
+      `\`dnf install ${missing.join(' ')} binutils findutils\`), or drop ` +
+      '`appimage` from BUNDLE_TARGETS.',
   )
+}
+
+function bundle(args: string[]) {
+  return spawnSync('pnpm', args, { stdio: 'inherit', cwd: __dirname }).status ?? 1
 }
 
 /**
@@ -141,20 +149,17 @@ async function main() {
     if (process.platform === 'linux' && (targets ?? 'appimage').includes('appimage')) {
       checkAppImageTools()
     }
-    const result = spawnSync('pnpm', args, {
-      stdio: 'inherit',
-      cwd: __dirname,
-      env: {
-        // `linuxdeploy` and `appimagetool` are AppImages themselves, so they
-        // mount over FUSE 2, which distributions no longer install by default;
-        // without it they die before printing why. Extracting them instead is
-        // what upstream recommends and costs a few seconds once.
-        APPIMAGE_EXTRACT_AND_RUN: '1',
-        ...process.env,
-      },
-    })
-    if (result.status !== 0) process.exit(result.status ?? 1)
-    return
+    const status = bundle(args)
+    if (status === 0) return
+    // The bundler pipes linuxdeploy's output into its debug log and reports the
+    // failure as a bare `failed to run linuxdeploy`, so the reason is only
+    // printed with `--verbose`. Retrying costs seconds — the compilation is
+    // already cached — and saves the user a second full build to learn why.
+    if (!args.some((arg) => arg === '--verbose' || /^-v+$/.test(arg))) {
+      console.error('\nThe bundler failed. Retrying with --verbose to show why.\n')
+      bundle([...args, '--verbose'])
+    }
+    process.exit(status)
   }
 
   if (target === 'shell') {
